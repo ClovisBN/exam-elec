@@ -4,7 +4,7 @@
     <div class="container">
         <h1>Votez pour votre {{ $type == 'délégué' ? 'délégué' : 'suppléant' }}</h1>
 
-        <form action="{{ route('elections.submitVote', $election) }}" method="POST">
+        <form action="{{ route('elections.submitVote', ['election' => $election->id, 'type' => $type]) }}" method="POST">
             @csrf
             @foreach (json_decode($election->participants, true) as $participant)
                 @if ($participant['is_candidate'])

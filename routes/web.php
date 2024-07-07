@@ -11,13 +11,13 @@ Route::get('/', function () {
 
 Auth::routes();
 
-Route::get('/home', [HomeController::class, 'index'])->name('home');
+Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');
 
 Route::resource('elections', ElectionController::class);
 Route::post('elections/{election}/start', [ElectionController::class, 'start'])->name('elections.start');
 Route::post('elections/{election}/endRound', [ElectionController::class, 'endRound'])->name('elections.endRound');
-Route::get('elections/{election}/vote', [ElectionController::class, 'vote'])->name('elections.vote');
-Route::post('elections/{election}/submit-vote', [ElectionController::class, 'submitVote'])->name('elections.submitVote');
+Route::get('elections/{election}/vote/{type}', [ElectionController::class, 'vote'])->name('elections.vote');
+Route::post('elections/{election}/submit-vote/{type}', [ElectionController::class, 'submitVote'])->name('elections.submitVote');
 Route::get('elections/{election}/results', [ElectionController::class, 'results'])->name('elections.results');
 Route::get('elections/{election}/join', [ElectionController::class, 'showJoinForm'])->name('elections.joinForm');
 Route::post('elections/{election}/join', [ElectionController::class, 'join'])->name('elections.join');

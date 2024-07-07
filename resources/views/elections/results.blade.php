@@ -37,4 +37,19 @@
             <p>Aucun vote enregistré pour le moment.</p>
         @endif
     </div>
+
+    <script>
+        function checkElectionStatus() {
+            fetch('{{ route('elections.checkRoundStatus', $election) }}')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'en cours' && data.type === 'suppléant') {
+                        window.location.href = '{{ route('elections.vote', [$election->id, 'suppléant']) }}';
+                    }
+                })
+                .catch(error => console.error('Error fetching election status:', error));
+        }
+
+        setInterval(checkElectionStatus, 5000); // Check every 5 seconds
+    </script>
 @endsection

@@ -128,7 +128,7 @@ class ElectionController extends Controller
         return redirect()->route('elections.show', $election)->with('success', 'L\'élection a commencé.');
     }
 
-    public function vote(Election $election)
+    public function vote(Election $election, string $type)
     {
         $participant_id = Session::get('participant_id');
         $participant = Participant::find($participant_id);
@@ -138,7 +138,6 @@ class ElectionController extends Controller
         }
 
         $results = $this->getResults($election);
-        $type = $this->getElectionType($results);
 
         if ($this->hasVoted($results[$type], $participant->id)) {
             return redirect()->route('elections.results', $election)->with('info', 'Vous avez déjà voté.');
@@ -147,17 +146,16 @@ class ElectionController extends Controller
         return view('elections.vote', compact('election', 'type'));
     }
 
-    public function submitVote(Request $request, Election $election)
+    public function submitVote(Request $request, Election $election, string $type)
     {
         $participant_id = Session::get('participant_id');
         $participant = Participant::find($participant_id);
 
         if (!$participant || $election->user_id == $participant->id) {
-            return redirect()->route('elections.vote', $election)->with('error', 'Vous n\'êtes pas autorisé à voter.');
+            return redirect()->route('elections.vote', ['election' => $election->id, 'type' => $type])->with('error', 'Vous n\'êtes pas autorisé à voter.');
         }
 
         $results = $this->getResults($election);
-        $type = $this->getElectionType($results);
 
         if ($this->hasVoted($results[$type], $participant->id)) {
             return redirect()->route('elections.results', $election)->with('info', 'Vous avez déjà voté.');
@@ -210,7 +208,7 @@ class ElectionController extends Controller
     private function electParticipant(Election $election, int $winnerId, string $role)
     {
         $participant = Participant::find($winnerId);
-        $participant->update(['role' => $role]);
+        $participant->update(['role' => $role, 'is_candidate' => false]);
 
         $participants = json_decode($election->participants, true);
         foreach ($participants as &$p) {
@@ -239,6 +237,9 @@ class ElectionController extends Controller
         ]);
 
         $this->logEvent($election->id, 'Élection du suppléant commencée.');
+
+        // Redirection vers la page de vote pour le tour du suppléant
+        return redirect()->route('elections.vote', ['election' => $election->id, 'type' => 'suppléant']);
     }
 
     private function hasVoted(array $results, int $participantId)

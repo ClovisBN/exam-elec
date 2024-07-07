@@ -1,4 +1,3 @@
-<!-- resources/views/elections/waiting.blade.php -->
 @extends('layouts.app')
 
 @section('content')
@@ -17,13 +16,16 @@
                 fetch('{{ route('elections.checkRoundStatus', $election) }}')
                     .then(response => response.json())
                     .then(data => {
-                        if (data.status === 'en cours') {
-                            window.location.href = '{{ route('elections.vote', $election) }}';
-                        } else if (data.status === 'terminé') {
+                        if (data.status === 'en cours' && !data.isFinished) {
+                            window.location.href =
+                                '{{ route('elections.vote', ['election' => $election->id, 'type' => 'délégué']) }}';
+                        } else if (data.status === 'en cours' && data.type === 'suppléant' && !data.isFinished) {
+                            window.location.href =
+                                '{{ route('elections.vote', ['election' => $election->id, 'type' => 'suppléant']) }}';
+                        } else if (data.isFinished) {
                             window.location.href = '{{ route('elections.results', $election) }}';
                         }
-                    })
-                    .catch(error => console.error('Error fetching election status:', error));
+                    });
             }
 
             setInterval(checkElectionStatus, 5000); // Vérifie toutes les 5 secondes
