@@ -19,8 +19,6 @@ return new class extends Migration
             // Foreign key column and constraint
             $table->unsignedBigInteger('status_id')->default(1);
             $table->foreign('status_id')->references('id')->on('election_statuses')->onDelete('cascade');
-
-            // Clé étrangère pour le créateur (supposant que les créateurs sont des utilisateurs)
             $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
         });
     }

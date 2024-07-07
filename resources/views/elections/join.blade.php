@@ -1,3 +1,4 @@
+<!-- resources/views/elections/join.blade.php -->
 @extends('layouts.app')
 
 @section('content')

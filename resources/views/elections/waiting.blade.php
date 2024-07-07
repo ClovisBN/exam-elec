@@ -1,3 +1,4 @@
+<!-- resources/views/elections/waiting.blade.php -->
 @extends('layouts.app')
 
 @section('content')
@@ -21,9 +22,11 @@
                         } else if (data.status === 'terminé') {
                             window.location.href = '{{ route('elections.results', $election) }}';
                         }
-                    });
+                    })
+                    .catch(error => console.error('Error fetching election status:', error));
             }
 
             setInterval(checkElectionStatus, 5000); // Vérifie toutes les 5 secondes
         </script>
-    @endsection
+    </div>
+@endsection

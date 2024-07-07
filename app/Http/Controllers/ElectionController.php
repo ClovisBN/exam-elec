@@ -16,8 +16,7 @@ class ElectionController extends Controller
 {
     public function index()
     {
-        $elections = Election::all();
-        return view('elections.index', compact('elections'));
+        return view('elections.index', ['elections' => Election::all()]);
     }
 
     public function create()
@@ -27,13 +26,16 @@ class ElectionController extends Controller
 
     public function store(Request $request)
     {
-        $election = new Election();
-        $election->name = $request->name;
-        $election->participants = json_encode([]);
-        $election->results = json_encode(['rounds' => [[]]]);
-        $election->status_id = ElectionStatus::where('status', 'en attente')->first()->id;
-        $election->user_id = Auth::id();
-        $election->save();
+        $election = Election::create([
+            'name' => $request->name,
+            'participants' => json_encode([]),
+            'results' => json_encode([
+                'délégué' => ['tour_1' => [], 'finish' => false],
+                'suppléant' => ['tour_1' => [], 'finish' => false]
+            ]),
+            'status_id' => ElectionStatus::where('status', 'en attente')->first()->id,
+            'user_id' => Auth::id(),
+        ]);
 
         return redirect()->route('elections.show', $election);
     }
@@ -62,14 +64,8 @@ class ElectionController extends Controller
         ]);
 
         $participants = json_decode($election->participants, true);
-        $participants[] = [
-            'id' => $participant->id,
-            'name' => $participant->name,
-            'is_candidate' => $participant->is_candidate,
-            'role' => $participant->role
-        ];
-        $election->participants = json_encode($participants);
-        $election->save();
+        $participants[] = $participant->only(['id', 'name', 'is_candidate', 'role']);
+        $election->update(['participants' => json_encode($participants)]);
 
         Session::put('participant_id', $participant->id);
 
@@ -78,26 +74,23 @@ class ElectionController extends Controller
 
     public function waiting(Election $election)
     {
-        $participant_id = Session::get('participant_id');
-        $participant = Participant::find($participant_id);
-
+        $participant = Participant::find(Session::get('participant_id'));
         return view('elections.waiting', compact('election', 'participant'));
     }
 
-    public function toggleCandidate(Request $request, Election $election)
+    public function toggleCandidate(Election $election)
     {
-        $participant_id = Session::get('participant_id');
-        $participant = Participant::find($participant_id);
+        $participant = Participant::find(Session::get('participant_id'));
 
         if (!$participant || $participant->election_id != $election->id) {
             return redirect()->route('elections.waiting', $election)->with('error', 'Participant non valide.');
         }
 
-        $participant->is_candidate = !$participant->is_candidate;
-        $participant->role = $participant->is_candidate ? 'candidat' : null;
-        $participant->save();
+        $participant->update([
+            'is_candidate' => !$participant->is_candidate,
+            'role' => $participant->is_candidate ? 'candidat' : null
+        ]);
 
-        // Mise à jour des participants dans l'élection
         $participants = json_decode($election->participants, true);
         foreach ($participants as &$p) {
             if ($p['id'] == $participant->id) {
@@ -106,8 +99,7 @@ class ElectionController extends Controller
                 break;
             }
         }
-        $election->participants = json_encode($participants);
-        $election->save();
+        $election->update(['participants' => json_encode($participants)]);
 
         $this->logEvent($election->id, "Le participant {$participant->name} a changé son statut de candidature.");
 
@@ -116,30 +108,24 @@ class ElectionController extends Controller
 
     public function start(Election $election)
     {
-        try {
-            $candidates = $election->participants()->where('is_candidate', true)->count();
+        $candidates = $election->participants()->where('is_candidate', true)->count();
 
-            if ($candidates < 2) {
-                return redirect()->route('elections.show', $election)->with('error', 'L\'élection ne peut pas être démarrée sans au moins deux candidats.');
-            }
-
-            $status = ElectionStatus::where('status', 'en cours')->first();
-
-            if (!$status) {
-                Log::error('Le statut "en cours" est introuvable.');
-                return redirect()->route('elections.show', $election)->with('error', 'Le statut "en cours" est introuvable.');
-            }
-
-            $election->status_id = $status->id;
-            $election->save();
-
-            $this->logEvent($election->id, 'L\'élection a commencé.');
-
-            return redirect()->route('elections.show', $election)->with('success', 'L\'élection a commencé.');
-        } catch (\Exception $e) {
-            Log::error('Erreur lors du démarrage de l\'élection:', ['exception' => $e]);
-            return redirect()->route('elections.show', $election)->with('error', 'Erreur lors du démarrage de l\'élection.');
+        if ($candidates < 2) {
+            return redirect()->route('elections.show', $election)->with('error', 'L\'élection ne peut pas être démarrée sans au moins deux candidats.');
         }
+
+        $status = ElectionStatus::where('status', 'en cours')->first();
+
+        if (!$status) {
+            Log::error('Le statut "en cours" est introuvable.');
+            return redirect()->route('elections.show', $election)->with('error', 'Le statut "en cours" est introuvable.');
+        }
+
+        $election->update(['status_id' => $status->id]);
+
+        $this->logEvent($election->id, 'L\'élection a commencé.');
+
+        return redirect()->route('elections.show', $election)->with('success', 'L\'élection a commencé.');
     }
 
     public function vote(Election $election)
@@ -147,21 +133,18 @@ class ElectionController extends Controller
         $participant_id = Session::get('participant_id');
         $participant = Participant::find($participant_id);
 
-        if (!$participant || $election->user_id == $participant->id) {
-            return redirect()->route('home')->with('error', 'Vous n\'êtes pas autorisé à voter dans cette élection.');
+        if (!$participant) {
+            return redirect()->route('home')->with('error', 'Participant non valide.');
         }
 
-        $results = json_decode($election->results, true) ?? ['rounds' => [[]]];
-        $rounds = $results['rounds'];
-        $roundIndex = count($rounds) - 1;
+        $results = $this->getResults($election);
+        $type = $this->getElectionType($results);
 
-        foreach ($rounds[$roundIndex] as $result) {
-            if ($result['participant_id'] == $participant_id) {
-                return redirect()->route('elections.results', $election)->with('info', 'Vous avez déjà voté.');
-            }
+        if ($this->hasVoted($results[$type], $participant->id)) {
+            return redirect()->route('elections.results', $election)->with('info', 'Vous avez déjà voté.');
         }
 
-        return view('elections.vote', compact('election'));
+        return view('elections.vote', compact('election', 'type'));
     }
 
     public function submitVote(Request $request, Election $election)
@@ -173,27 +156,19 @@ class ElectionController extends Controller
             return redirect()->route('elections.vote', $election)->with('error', 'Vous n\'êtes pas autorisé à voter.');
         }
 
-        $results = json_decode($election->results, true) ?? ['rounds' => [[]]];
-        $rounds = $results['rounds'];
-        $roundIndex = count($rounds) - 1;
+        $results = $this->getResults($election);
+        $type = $this->getElectionType($results);
 
-        foreach ($rounds[$roundIndex] as $result) {
-            if ($result['participant_id'] == $participant_id) {
-                return redirect()->route('elections.results', $election)->with('info', 'Vous avez déjà voté.');
-            }
+        if ($this->hasVoted($results[$type], $participant->id)) {
+            return redirect()->route('elections.results', $election)->with('info', 'Vous avez déjà voté.');
         }
 
-        $vote = $request->input('candidate');
-        $rounds[$roundIndex][] = ['vote' => $vote, 'participant_id' => $participant->id];
-
-        $results['rounds'] = $rounds;
-        $election->results = json_encode($results);
-        $election->save();
+        $results[$type]['tour_1'][] = ['vote' => $request->input('candidate'), 'participant_id' => $participant->id];
+        $this->saveResults($election, $results);
 
         $this->logEvent($election->id, 'Un participant a voté.');
 
-        $totalParticipants = $election->participants()->count();
-        if (count($rounds[$roundIndex]) >= $totalParticipants - 1) {
+        if (count($results[$type]['tour_1']) >= $election->participants()->count() - 1) {
             return $this->endRound($election);
         }
 
@@ -202,153 +177,112 @@ class ElectionController extends Controller
 
     public function endRound(Election $election)
     {
-        try {
-            Log::info('endRound method called for election ID: ' . $election->id);
+        $results = $this->getResults($election);
+        $type = $this->getElectionType($results);
 
-            $results = $this->getResults($election);
-            $roundIndex = $this->getCurrentRoundIndex($results);
+        $voteCounts = $this->countVotes($results[$type]['tour_1']);
+        $winnerId = $this->getWinnerId($voteCounts, $election);
+        $winner = Participant::find($winnerId);
 
-            if ($this->isNoVotesRecorded($results, $roundIndex)) {
-                return redirect()->route('elections.show', $election)->with('error', 'Aucun vote enregistré pour ce tour.');
-            }
-
-            $voteCounts = $this->countVotes($results, $roundIndex);
-            $topVotes = array_values($voteCounts);
-            $totalVotes = array_sum($topVotes);
-            $totalParticipants = $election->participants()->count();
-
-            $this->logEvent($election->id, "Nombre de votes: $totalVotes / Nombre de participants: $totalParticipants");
-
-            $absoluteMajorityThreshold = $totalParticipants / 2;
-            $absoluteMajority = $topVotes[0] > $absoluteMajorityThreshold;
-
-            if ($absoluteMajority || $roundIndex > 0) {
-                $winnerName = array_search($topVotes[0], $voteCounts);
-                $winner = Participant::where('name', $winnerName)->where('election_id', $election->id)->first();
-                if ($winner) {
-                    $this->electParticipant($election, $winner->id, $absoluteMajority);
-                } else {
-                    throw new \Exception('Impossible de trouver le participant élu.');
-                }
-            } else {
-                $results['rounds'][] = [];
-                $this->saveResults($election, $results);
-                $this->logEvent($election->id, 'Pas de majorité absolue, deuxième tour lancé.');
-
-                // Redirection spécifique pour le créateur de l'élection
-                if (Auth::id() == $election->user_id) {
-                    return redirect()->route('elections.show', $election)->with('info', 'Deuxième tour lancé.');
-                } else {
-                    // Rediriger les participants (non créateurs) vers la page de vote
-                    return redirect()->route('elections.vote', $election);
-                }
-            }
-
-            $this->saveResults($election, $results);
-            $this->notifyParticipants($election);
-
-            return redirect()->route('elections.show', $election)->with('info', 'Le vote est terminé.');
-        } catch (\Exception $e) {
-            Log::error('Error in endRound method:', ['exception' => $e]);
-            return redirect()->route('elections.show', $election)->with('error', 'Erreur lors de la fin du tour.');
+        if ($type == 'délégué') {
+            $this->electParticipant($election, $winnerId, 'délégué');
+            $this->logEvent($election->id, "Le participant {$winner->name} a été élu délégué.");
+            $this->startSuppléantElection($election);
+        } else {
+            $this->electParticipant($election, $winnerId, 'suppléant');
+            $this->logEvent($election->id, "Le participant {$winner->name} a été élu suppléant.");
         }
+
+        return redirect()->route('elections.show', $election)->with('info', 'Le vote est terminé.');
     }
 
-    private function electParticipant(Election $election, int $winnerId, bool $absoluteMajority)
+    private function getElectionType(array $results)
     {
-        $electedParticipant = Participant::where('id', $winnerId)->where('election_id', $election->id)->first();
-        Log::info('Elected participant', ['electedParticipant' => $electedParticipant]);
-
-        if ($electedParticipant === null) {
-            Log::error('Elected participant not found.');
-            throw new \Exception('Impossible de trouver le participant élu.');
+        if (!$results['délégué']['finish']) {
+            return 'délégué';
         }
+        if (!$results['suppléant']['finish']) {
+            return 'suppléant';
+        }
+        return 'terminé';
+    }
 
-        $electedParticipant->role = 'délégué';
-        $electedParticipant->is_candidate = false;
-        $electedParticipant->save();
-
-        Log::info('Participant elected as delegate', ['electedParticipant' => $electedParticipant]);
+    private function electParticipant(Election $election, int $winnerId, string $role)
+    {
+        $participant = Participant::find($winnerId);
+        $participant->update(['role' => $role]);
 
         $participants = json_decode($election->participants, true);
         foreach ($participants as &$p) {
-            if ($p['id'] == $electedParticipant->id) {
+            if ($p['id'] == $winnerId) {
                 $p['is_candidate'] = false;
-                $p['role'] = 'délégué';
+                $p['role'] = $role;
                 break;
             }
         }
-        $election->participants = json_encode($participants);
-        $election->status_id = ElectionStatus::where('status', 'terminé')->first()->id;
-        $election->save();
+        $election->update(['participants' => json_encode($participants)]);
 
-        $message = "Le participant {$electedParticipant->name} a été élu délégué.";
-        if ($absoluteMajority) {
-            $message .= " Il a été élu à la majorité absolue.";
+        $results = $this->getResults($election);
+        $results[$role]['finish'] = true;
+        $this->saveResults($election, $results);
+    }
+
+    private function startSuppléantElection(Election $election)
+    {
+        $results = $this->getResults($election);
+        $results['suppléant']['finish'] = false;
+        $results['suppléant']['tour_1'] = [];
+
+        $election->update([
+            'results' => json_encode($results),
+            'status_id' => ElectionStatus::where('status', 'en cours')->first()->id
+        ]);
+
+        $this->logEvent($election->id, 'Élection du suppléant commencée.');
+    }
+
+    private function hasVoted(array $results, int $participantId)
+    {
+        foreach ($results as $rounds) {
+            if (is_array($rounds)) {
+                foreach ($rounds as $votes) {
+                    foreach ($votes as $vote) {
+                        if (isset($vote['participant_id']) && $vote['participant_id'] == $participantId) {
+                            return true;
+                        }
+                    }
+                }
+            }
         }
-        $this->logEvent($election->id, $message);
+        return false;
     }
 
-    private function getResults(Election $election)
+    private function countVotes(array $round)
     {
-        $results = json_decode($election->results, true) ?? ['rounds' => [[]]];
-        Log::info('Results decoded', ['results' => $results]);
-        return $results;
-    }
-
-    private function getCurrentRoundIndex(array $results)
-    {
-        $roundIndex = count($results['rounds']) - 1;
-        Log::info('Current round index', ['roundIndex' => $roundIndex]);
-        return $roundIndex;
-    }
-
-    private function isNoVotesRecorded(array $results, int $roundIndex)
-    {
-        $noVotes = $roundIndex < 0 || empty($results['rounds'][$roundIndex]);
-        if ($noVotes) {
-            Log::info('No votes recorded for this round.');
-        }
-        return $noVotes;
-    }
-
-    private function countVotes(array $results, int $roundIndex)
-    {
-        $voteCounts = array_count_values(array_column($results['rounds'][$roundIndex], 'vote'));
+        $voteCounts = array_count_values(array_column($round, 'vote'));
         arsort($voteCounts);
-        Log::info('Vote counts', ['voteCounts' => $voteCounts]);
         return $voteCounts;
+    }
+
+    private function getWinnerId(array $voteCounts, Election $election)
+    {
+        $winnerName = array_search(max($voteCounts), $voteCounts);
+        return Participant::where('name', $winnerName)->where('election_id', $election->id)->first()->id;
     }
 
     private function saveResults(Election $election, array $results)
     {
-        $election->results = json_encode($results);
-        $election->save();
-        Log::info('Results saved', ['results' => json_decode($election->results, true)]);
-    }
-
-    private function notifyParticipants(Election $election)
-    {
-        $participants = $election->participants()->get();
-        foreach ($participants as $participant) {
-            if ($participant->is_candidate && $participant->id !== $election->user_id) {
-                Session::put('participant_id', $participant->id);
-                // Utilisez WebSocket ou autre mécanisme pour notifier les participants
-            }
-        }
+        $election->update(['results' => json_encode($results)]);
     }
 
     private function logEvent(int $electionId, string $message)
     {
-        ElectionLog::create([
-            'election_id' => $electionId,
-            'message' => $message,
-        ]);
+        ElectionLog::create(['election_id' => $electionId, 'message' => $message]);
     }
 
     public function results(Election $election)
     {
-        $results = json_decode($election->results, true) ?? [];
+        $results = $this->getResults($election);
         return view('elections.results', compact('election', 'results'));
     }
 
@@ -360,12 +294,24 @@ class ElectionController extends Controller
 
     public function checkRoundStatus(Election $election)
     {
-        $results = json_decode($election->results, true) ?? ['rounds' => [[]]];
-        $roundIndex = count($results['rounds']) - 1;
-    
+        $results = $this->getResults($election);
+        $type = $this->getElectionType($results);
         return response()->json([
             'status' => $election->status->status,
-            'roundIndex' => $roundIndex
+            'roundIndex' => count($results[$type]['tour_1']) - 1,
+            'type' => $type
         ]);
-    }      
+    }
+
+    private function getResults(Election $election)
+    {
+        $results = json_decode($election->results, true);
+        if (!$results) {
+            $results = [
+                'délégué' => ['tour_1' => [], 'finish' => false],
+                'suppléant' => ['tour_1' => [], 'finish' => false]
+            ];
+        }
+        return $results;
+    }
 }
