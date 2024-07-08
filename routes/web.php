@@ -4,6 +4,9 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\ElectionController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\AdminController;
+
 
 Route::get('/', function () {
     return view('welcome');
@@ -24,3 +27,18 @@ Route::post('elections/{election}/join', [ElectionController::class, 'join'])->n
 Route::get('elections/{election}/waiting', [ElectionController::class, 'waiting'])->name('elections.waiting');
 Route::post('elections/{election}/toggle-candidate', [ElectionController::class, 'toggleCandidate'])->name('elections.toggleCandidate');
 Route::get('/elections/{election}/check-round-status', [ElectionController::class, 'checkRoundStatus'])->name('elections.checkRoundStatus');
+
+
+Route::group(['middleware' => ['check.visitor']], function () {
+    Route::get('/profile', [ProfileController::class, 'show'])->name('profile.show');
+    Route::post('/profile', [ProfileController::class, 'update'])->name('profile.update');
+});
+
+
+Route::middleware(['auth', 'check.role:admin'])->group(function () {
+    Route::get('/admin/users', [AdminController::class, 'index'])->name('admin.users.index');
+    Route::get('/admin/users/{user}', [AdminController::class, 'show'])->name('admin.users.show');
+    Route::get('/admin/users/{user}/edit', [AdminController::class, 'edit'])->name('admin.users.edit');
+    Route::put('/admin/users/{user}', [AdminController::class, 'update'])->name('admin.users.update');
+    Route::delete('/admin/users/{user}', [AdminController::class, 'destroy'])->name('admin.users.destroy');
+});

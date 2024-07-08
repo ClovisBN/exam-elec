@@ -12,7 +12,6 @@ class ElectionStatusSeeder extends Seeder
         $statuses = [
             ['status' => 'en attente'],
             ['status' => 'en cours'],
-            ['status' => 'délégué'],
             ['status' => 'terminé']
         ];
 

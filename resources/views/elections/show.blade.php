@@ -24,10 +24,12 @@
                 <button type="submit" class="btn btn-primary">Démarrer l'élection</button>
             </form>
         @elseif ($election->status->status === 'en cours')
-            <form action="{{ route('elections.endRound', $election) }}" method="POST" class="mt-3">
-                @csrf
-                <button type="submit" class="btn btn-warning">Terminer le vote</button>
-            </form>
+            @if (!$results['délégué']['finish'] || !$results['suppléant']['finish'])
+                <form action="{{ route('elections.endRound', $election) }}" method="POST" class="mt-3">
+                    @csrf
+                    <button type="submit" class="btn btn-warning">Terminer le vote</button>
+                </form>
+            @endif
         @endif
 
         <div class="mt-4">
